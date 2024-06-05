@@ -1,0 +1,120 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: odoo
+  # namespace: default
+  annotations:
+    ingressClassName: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "720s"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "720s"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "720s"
+    nginx.ingress.kubernetes.io/gzip-types: "text/css text/scss text/plain text/xml application/xml application/json application/javascript"
+    nginx.ingress.kubernetes.io/use-gzip: "true"
+    nginx.ingress.kubernetes.io/location-snippet: |
+      location /websocket {
+        proxy_pass http://odoo:8072;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+      }
+      location / {
+        # Add Headers for odoo proxy mode
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_redirect off;
+        proxy_pass http://odoo:8069;
+      }
+    nginx.ingress.kubernetes.io/server-snippet: |
+      add_header 'Content-Security-Policy' 'upgrade-insecure-requests';
+spec:
+  rules:
+    - host: odoo.example.com
+      http:
+        paths:
+          - pathType: Prefix
+            backend:
+              service:
+                name: odoo
+                port:
+                  number: 8069
+            path: /
+  tls:
+    - hosts:
+      - odoo.example.com
+---
+# username/password: admin/admin
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  # namespace: prometheus
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    ingressClassName: "traefik"
+spec:
+  rules:
+    - host: monitor.example.com
+      http:
+        paths:
+          - path: /prometheus
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-community-kube-prometheus
+                port:
+                  number: 9090
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus-community-grafana
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - monitor.example.com
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: middleware
+  namespace: longhorn-system
+spec:
+  replacePathRegex:
+    regex: "^/longhorn(/|$)(.*)"
+    replacement: "/${2}"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: longhorn-ingress
+  namespace: longhorn-system
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    ngressClassName: traefik
+    traefik.ingress.kubernetes.io/rule-type: PathPrefixStrip
+    traefik.ingress.kubernetes.io/router.middlewares: longhorn-system-middleware@kubernetescrd
+spec:
+  rules:
+  - host: monitor.example.com
+    http:
+      paths:
+      - path: /longhorn/
+        pathType: Prefix
+        backend:
+          service:
+            name: longhorn-frontend
+            port:
+              number: 80
+  tls:
+    - hosts:
+        - monitor.example.com  
+# kubectl create ns ingress-nginx
+# helm install ingress-nginx -n ingress-nginx .
